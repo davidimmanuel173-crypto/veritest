@@ -17,7 +17,29 @@ def get_connection(db_path: str = DB_PATH) -> sqlite3.Connection:
     """Returns a SQLite connection with Row factory enabled."""
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+def validate_response_data(responses_df: pd.DataFrame) -> None:
+    """Rejects response data that cannot be analyzed or safely stored."""
+    required = {"student_id", "question_id", "answer"}
+    missing = required - set(responses_df.columns)
+    if missing:
+        raise ValueError(f"Missing required response columns: {', '.join(sorted(missing))}")
+    if responses_df.empty:
+        raise ValueError("The responses file is empty.")
+    if responses_df[list(required)].isna().any().any():
+        raise ValueError("student_id, question_id, and answer cannot be blank.")
+    if responses_df["student_id"].astype(str).str.strip().eq("").any() or responses_df["question_id"].astype(str).str.strip().eq("").any():
+        raise ValueError("student_id and question_id cannot be blank.")
+    duplicate_rows = responses_df.duplicated(["student_id", "question_id"], keep=False)
+    if duplicate_rows.any():
+        raise ValueError("Each student_id/question_id pair must appear only once.")
+    if "is_correct" in responses_df.columns:
+        values = pd.to_numeric(responses_df["is_correct"], errors="coerce")
+        if values.isna().any() or not values.isin([0, 1]).all():
+            raise ValueError("is_correct must contain only 0 or 1 values.")
 
 
 def init_db(db_path: str = DB_PATH) -> None:
@@ -162,6 +184,7 @@ def save_exam_dataset(
     db_path: str = DB_PATH,
 ) -> int:
     """Saves a newly ingested exam and its associated data tables into SQLite."""
+    validate_response_data(responses_df)
     init_db(db_path)
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
@@ -268,6 +291,7 @@ def get_latest_exam_id(db_path: str = DB_PATH) -> Optional[int]:
 
 def get_exam_responses(exam_id: int, db_path: str = DB_PATH) -> pd.DataFrame:
     """Retrieves full student response DataFrame for an exam."""
+    init_db(db_path)
     with get_connection(db_path) as conn:
         return pd.read_sql_query(
             "SELECT student_id, question_id, answer, is_correct, response_time_sec, seat_id, timestamp "
@@ -279,6 +303,7 @@ def get_exam_responses(exam_id: int, db_path: str = DB_PATH) -> pd.DataFrame:
 
 def get_exam_answer_key(exam_id: int, db_path: str = DB_PATH) -> pd.DataFrame:
     """Retrieves answer key DataFrame for an exam."""
+    init_db(db_path)
     with get_connection(db_path) as conn:
         return pd.read_sql_query(
             "SELECT question_id, correct_answer, distractors FROM answer_keys WHERE exam_id = ?",
@@ -289,6 +314,7 @@ def get_exam_answer_key(exam_id: int, db_path: str = DB_PATH) -> pd.DataFrame:
 
 def get_exam_baselines(exam_id: int, db_path: str = DB_PATH) -> pd.DataFrame:
     """Retrieves student baseline performance data."""
+    init_db(db_path)
     with get_connection(db_path) as conn:
         return pd.read_sql_query(
             "SELECT student_id, gpa, prior_score FROM student_baselines WHERE exam_id = ?",
@@ -299,6 +325,7 @@ def get_exam_baselines(exam_id: int, db_path: str = DB_PATH) -> pd.DataFrame:
 
 def get_exam_seat_map(exam_id: int, db_path: str = DB_PATH) -> pd.DataFrame:
     """Retrieves seating coordinates for an exam."""
+    init_db(db_path)
     with get_connection(db_path) as conn:
         return pd.read_sql_query(
             "SELECT seat_id, row_num, col_num, x_pos, y_pos FROM seat_maps WHERE exam_id = ?",
@@ -349,6 +376,7 @@ def save_pair_analyses(exam_id: int, pairs_df: pd.DataFrame, db_path: str = DB_P
 
 def get_pair_analyses(exam_id: int, db_path: str = DB_PATH) -> pd.DataFrame:
     """Retrieves computed pair analysis results for an exam."""
+    init_db(db_path)
     with get_connection(db_path) as conn:
         return pd.read_sql_query(
             "SELECT student_a, student_b, wrong_agreement, total_wrong_both, total_questions, "
@@ -394,6 +422,7 @@ def save_individual_analyses(exam_id: int, ind_df: pd.DataFrame, db_path: str = 
 
 def get_individual_analyses(exam_id: int, db_path: str = DB_PATH) -> pd.DataFrame:
     """Retrieves computed individual analysis results for an exam."""
+    init_db(db_path)
     with get_connection(db_path) as conn:
         return pd.read_sql_query(
             "SELECT student_id, raw_score, total_questions, percentage, irt_ability, "

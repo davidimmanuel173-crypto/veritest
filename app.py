@@ -18,6 +18,7 @@ from db import (
     save_exam_dataset,
     save_individual_analyses,
     save_pair_analyses,
+    validate_response_data,
 )
 
 DB_PATH = str(Path(__file__).with_name("veritest.db"))
@@ -41,7 +42,8 @@ def calculate_analyses(responses: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFr
     working = responses.copy()
     if "is_correct" not in working.columns:
         raise ValueError("Responses must include is_correct for analysis.")
-    working["is_correct"] = pd.to_numeric(working["is_correct"], errors="coerce").fillna(0).astype(int)
+    validate_response_data(working)
+    working["is_correct"] = pd.to_numeric(working["is_correct"], errors="coerce").astype(int)
 
     scores = working.groupby("student_id", as_index=False)["is_correct"].agg(raw_score="sum", total_questions="count")
     scores["percentage"] = scores["raw_score"] / scores["total_questions"].replace(0, np.nan) * 100
@@ -102,13 +104,14 @@ def render_ingest() -> None:
         st.error("Provide an exam title and responses CSV.")
         return
     responses = read_csv(responses_file)
-    missing = REQUIRED_RESPONSE_COLUMNS - set(responses.columns)
-    if missing:
-        st.error(f"Responses CSV is missing: {', '.join(sorted(missing))}.")
-        return
     if "is_correct" not in responses.columns:
         st.warning("No is_correct column found. The exam will be stored, but analysis requires it.")
-    exam_id = save_exam_dataset(title.strip(), course.strip(), responses, clean_optional_upload(answer_key_file), clean_optional_upload(baselines_file), db_path=DB_PATH)
+    try:
+        validate_response_data(responses)
+        exam_id = save_exam_dataset(title.strip(), course.strip(), responses, clean_optional_upload(answer_key_file), clean_optional_upload(baselines_file), db_path=DB_PATH)
+    except (ValueError, KeyError) as error:
+        st.error(str(error))
+        return
     log_audit_event("instructor", "import_exam", "exam", str(exam_id), f"Imported {len(responses)} response rows.", db_path=DB_PATH)
     st.success(f"Imported exam #{exam_id}.")
 
@@ -134,11 +137,14 @@ def render_analysis(exam_id: int) -> None:
         st.info("Analysis requires response data with an is_correct column.")
         return
     if st.button("Run analysis", type="primary"):
-        pairs, individuals = calculate_analyses(responses)
-        save_pair_analyses(exam_id, pairs, db_path=DB_PATH) if not pairs.empty else None
-        save_individual_analyses(exam_id, individuals, db_path=DB_PATH)
-        log_audit_event("instructor", "run_analysis", "exam", str(exam_id), db_path=DB_PATH)
-        st.success("Analysis saved.")
+        try:
+            pairs, individuals = calculate_analyses(responses)
+            save_pair_analyses(exam_id, pairs, db_path=DB_PATH)
+            save_individual_analyses(exam_id, individuals, db_path=DB_PATH)
+            log_audit_event("instructor", "run_analysis", "exam", str(exam_id), db_path=DB_PATH)
+            st.success("Analysis saved.")
+        except ValueError as error:
+            st.error(str(error))
     pair_results = get_pair_analyses(exam_id, db_path=DB_PATH)
     individual_results = get_individual_analyses(exam_id, db_path=DB_PATH)
     st.write("Pair indicators")

@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from db import (
     get_audit_logs,
@@ -36,3 +37,19 @@ def test_exam_and_analysis_round_trip(tmp_path):
     assert len(get_pair_analyses(exam_id, db_path=db_path)) == 1
     assert len(get_individual_analyses(exam_id, db_path=db_path)) == 1
     assert get_audit_logs(db_path=db_path).iloc[0]["action"] == "run_analysis"
+
+
+@pytest.mark.parametrize(
+    "rows, message",
+    [
+        ([{"student_id": "", "question_id": "Q1", "answer": "A"}], "cannot be blank"),
+        ([
+            {"student_id": "S1", "question_id": "Q1", "answer": "A"},
+            {"student_id": "S1", "question_id": "Q1", "answer": "B"},
+        ], "only once"),
+        ([{"student_id": "S1", "question_id": "Q1", "answer": "A", "is_correct": 2}], "only 0 or 1"),
+    ],
+)
+def test_invalid_response_data_is_rejected(tmp_path, rows, message):
+    with pytest.raises(ValueError, match=message):
+        save_exam_dataset("Invalid", "BIO-201", pd.DataFrame(rows), db_path=str(tmp_path / "invalid.db"))
