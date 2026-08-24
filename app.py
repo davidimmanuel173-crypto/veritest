@@ -25,6 +25,27 @@ DB_PATH = str(Path(__file__).with_name("veritest.db"))
 REQUIRED_RESPONSE_COLUMNS = {"student_id", "question_id", "answer"}
 
 
+def authentication_enabled() -> bool:
+    """Returns whether OIDC login has been enabled in Streamlit secrets."""
+    return str(st.secrets.get("AUTH_ENABLED", "false")).lower() == "true"
+
+
+def require_login() -> None:
+    """Stops unauthenticated users before any exam data is displayed."""
+    if not authentication_enabled():
+        return
+    if not st.user.is_logged_in:
+        st.title("VeriTest")
+        st.info("Sign in with your approved Google account to continue.")
+        if st.button("Sign in with Google", type="primary"):
+            st.login("google")
+        st.stop()
+    with st.sidebar:
+        st.caption(f"Signed in as {st.user.email}")
+        if st.button("Sign out"):
+            st.logout()
+
+
 @st.cache_data(show_spinner=False)
 def read_csv(uploaded_file) -> pd.DataFrame:
     """Read an uploaded CSV into a cached DataFrame."""
@@ -86,7 +107,6 @@ def calculate_analyses(responses: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFr
             "flags_json": {"method": "wrong-answer agreement"},
         })
     return pd.DataFrame(pairs), individual
-
 
 def render_ingest() -> None:
     st.subheader("Ingest an exam")
@@ -155,6 +175,7 @@ def render_analysis(exam_id: int) -> None:
 
 def main() -> None:
     st.set_page_config(page_title="VeriTest", page_icon="V", layout="wide")
+    require_login()
     st.title("VeriTest")
     st.caption("Exam integrity review workspace")
     exams = get_all_exams(db_path=DB_PATH)
