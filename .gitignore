@@ -3,3 +3,4 @@ veritest.db
 __pycache__/
 .pytest_cache/
 sample_responses.csv
+.streamlit/secrets.toml
